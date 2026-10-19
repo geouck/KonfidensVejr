@@ -41,6 +41,8 @@ const API_URL =
   "https://opendataapi.dmi.dk/v1/forecastedr/collections/harmonie_dini_eps_percentiles/position";
 
 const FAV_KEY = "konfidensvejr.favorites";
+const CACHE_KEY_PREFIX = "konfidensvejr.cov.";
+const CACHE_TTL_MS = 15 * 60 * 1000;
 
 const els = {
   search: document.getElementById("city-search"),
@@ -150,12 +152,44 @@ function renderSearchResults(query) {
   els.results.hidden = false;
 }
 
+function cacheKey(city) {
+  return `${CACHE_KEY_PREFIX}${city.lon.toFixed(4)},${city.lat.toFixed(4)}`;
+}
+
+function readCache(city) {
+  try {
+    const raw = sessionStorage.getItem(cacheKey(city));
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (!entry || typeof entry.expires !== "number" || Date.now() > entry.expires) {
+      sessionStorage.removeItem(cacheKey(city));
+      return null;
+    }
+    return entry.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(city, data) {
+  try {
+    sessionStorage.setItem(cacheKey(city), JSON.stringify({ expires: Date.now() + CACHE_TTL_MS, data }));
+  } catch {
+    // sessionStorage full or unavailable; caching is best-effort
+  }
+}
+
 async function fetchForecast(city) {
+  const cached = readCache(city);
+  if (cached) return cached;
+
   const coords = `POINT(${city.lon} ${city.lat})`;
   const url = `${API_URL}?coords=${encodeURIComponent(coords)}&crs=crs84&parameter-name=${PARAMS.join(",")}`;
   const res = await fetchWithRetry(url, 2);
   if (!res.ok) throw new Error(`DMI API svarede ${res.status}`);
-  return res.json();
+  const data = await res.json();
+  writeCache(city, data);
+  return data;
 }
 
 async function fetchWithRetry(url, retries) {
