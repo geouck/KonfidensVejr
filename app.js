@@ -26,6 +26,57 @@ const CITIES = [
   { name: "Fredericia", lat: 55.566, lon: 9.755 },
   { name: "Nørresundby", lat: 57.058, lon: 9.919 },
   { name: "Årslev", lat: 55.301, lon: 10.456 },
+  { name: "Ikast", lat: 56.139, lon: 9.155 },
+  { name: "Middelfart", lat: 55.505, lon: 9.732 },
+  { name: "Grenaa", lat: 56.416, lon: 10.879 },
+  { name: "Nyborg", lat: 55.312, lon: 10.79 },
+  { name: "Faaborg", lat: 55.096, lon: 10.245 },
+  { name: "Skive", lat: 56.567, lon: 9.029 },
+  { name: "Thisted", lat: 56.955, lon: 8.694 },
+  { name: "Brønderslev", lat: 57.258, lon: 9.945 },
+  { name: "Frederikshavn", lat: 57.44, lon: 10.536 },
+  { name: "Hadsund", lat: 56.715, lon: 10.114 },
+  { name: "Rønne", lat: 55.1, lon: 14.7 },
+  { name: "Nexø", lat: 55.062, lon: 15.131 },
+  { name: "Rudkøbing", lat: 54.869, lon: 10.724 },
+  { name: "Maribo", lat: 54.777, lon: 11.503 },
+  { name: "Vordingborg", lat: 55.008, lon: 11.91 },
+  { name: "Kalundborg", lat: 55.679, lon: 11.09 },
+  { name: "Frederikssund", lat: 55.839, lon: 12.068 },
+  { name: "Frederiksværk", lat: 55.97, lon: 12.02 },
+  { name: "Birkerød", lat: 55.842, lon: 12.432 },
+  { name: "Solrød Strand", lat: 55.532, lon: 12.183 },
+  { name: "Greve", lat: 55.583, lon: 12.293 },
+  { name: "Ishøj", lat: 55.616, lon: 12.352 },
+  { name: "Hvidovre", lat: 55.657, lon: 12.472 },
+  { name: "Rødovre", lat: 55.681, lon: 12.453 },
+  { name: "Glostrup", lat: 55.666, lon: 12.412 },
+  { name: "Albertslund", lat: 55.657, lon: 12.353 },
+  { name: "Taastrup", lat: 55.65, lon: 12.3 },
+  { name: "Ballerup", lat: 55.728, lon: 12.362 },
+  { name: "Lyngby", lat: 55.77, lon: 12.503 },
+  { name: "Hørsholm", lat: 55.882, lon: 12.499 },
+  { name: "Fredensborg", lat: 55.975, lon: 12.402 },
+  { name: "Svejbæk", lat: 55.988, lon: 12.533 },
+  { name: "Græsted", lat: 55.998, lon: 12.403 },
+  { name: "Rønnede", lat: 55.246, lon: 12.466 },
+  { name: "Faxe", lat: 55.195, lon: 12.167 },
+  { name: "Stege", lat: 54.985, lon: 12.276 },
+  { name: "Nakskov", lat: 54.833, lon: 11.136 },
+  { name: "Hobro", lat: 56.642, lon: 9.79 },
+  { name: "Løgstør", lat: 56.958, lon: 9.336 },
+  { name: "Lemvig", lat: 56.551, lon: 8.307 },
+  { name: "Struer", lat: 56.492, lon: 8.595 },
+  { name: "Ringkøbing", lat: 56.089, lon: 8.271 },
+  { name: "Varde", lat: 55.62, lon: 8.482 },
+  { name: "Grindsted", lat: 55.756, lon: 8.928 },
+  { name: "Vejen", lat: 55.48, lon: 9.137 },
+  { name: "Ribe", lat: 55.33, lon: 8.766 },
+  { name: "Åbenrå", lat: 55.035, lon: 9.419 },
+  { name: "Tønder", lat: 54.934, lon: 8.856 },
+  { name: "Padborg", lat: 54.823, lon: 9.36 },
+  { name: "Samsø", lat: 55.833, lon: 10.583 },
+  { name: "Thyborøn", lat: 56.71, lon: 8.217 },
 ];
 
 const PARAMS = [
@@ -40,10 +91,7 @@ const PARAMS = [
 const API_URL =
   "https://opendataapi.dmi.dk/v1/forecastedr/collections/harmonie_dini_eps_percentiles/position";
 
-const CONFIG = window.KONFIDENSVEJR_CONFIG || { version: "alfa.3", danadresseApiKey: "" };
-const DANADRESSE_URL = "https://api.danadresse.dk/steder/autocomplete";
-const DAWA_DEBOUNCE_MS = 300;
-const DAWA_KEY_STORAGE = "konfidensvejr.danadressekey";
+const APP_VERSION = "alfa.4";
 const CACHE_KEY_PREFIX = "konfidensvejr.cov.";
 const CACHE_TTL_MS = 15 * 60 * 1000;
 
@@ -138,55 +186,32 @@ function removeFavorite(city) {
   renderFavorites();
 }
 
-function getDanadresseKey() {
-  if (CONFIG.danadresseApiKey) return CONFIG.danadresseApiKey;
-  try {
-    return localStorage.getItem(DAWA_KEY_STORAGE) || "";
-  } catch {
-    return "";
-  }
+function normalizeText(s) {
+  return s
+    .toLowerCase()
+    .replace(/å/g, "a")
+    .replace(/ø/g, "o")
+    .replace(/æ/g, "a")
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-let searchToken = 0;
-let debounceTimer = null;
+function localSearch(query) {
+  const q = normalizeText(query);
+  if (!q) return CITIES.slice(0, 12);
+  const starts = [];
+  const contains = [];
+  for (const city of CITIES) {
+    const n = normalizeText(city.name);
+    if (n.startsWith(q)) starts.push(city);
+    else if (n.includes(q)) contains.push(city);
+  }
+  return starts.concat(contains).slice(0, 12);
+}
 
 function searchInputHandler(e) {
-  if (debounceTimer) clearTimeout(debounceTimer);
-  const q = e.target.value.trim();
-  if (q.length < 2) {
-    renderCityListSuggestions(CITIES.slice(0, 12));
-    return;
-  }
-  debounceTimer = setTimeout(() => runSearch(q), DAWA_DEBOUNCE_MS);
-}
-
-async function runSearch(query) {
-  const token = ++searchToken;
-  const key = getDanadresseKey();
-  const fallback = () =>
-    CITIES.filter((c) => c.name.toLowerCase().includes(query.toLowerCase())).slice(0, 12);
-  if (!key) {
-    renderCityListSuggestions(fallback());
-    return;
-  }
-  try {
-    const url = `${DANADRESSE_URL}?q=${encodeURIComponent(query)}&type=bebyggelse,postnummer&per_side=12`;
-    const res = await fetch(url, { headers: { "X-Api-Key": key } });
-    if (!res.ok) throw new Error(`status ${res.status}`);
-    const results = await res.json();
-    if (token !== searchToken) return;
-    const places = (Array.isArray(results) ? results : []).map(dawaResultToCity).filter(Boolean);
-    renderCityListSuggestions(places.length > 0 ? places : fallback());
-  } catch {
-    if (token === searchToken) renderCityListSuggestions(fallback());
-  }
-}
-
-function dawaResultToCity(r) {
-  const lat = r?.wgs84koordinat?.lat ?? r?.geometry?.coordinates?.[1] ?? r?.y;
-  const lon = r?.wgs84koordinat?.lon ?? r?.geometry?.coordinates?.[0] ?? r?.x;
-  if (!isFinite(lat) || !isFinite(lon)) return null;
-  return { name: r.tekst || r.navn || "Ukendt sted", lat, lon };
+  renderCityListSuggestions(localSearch(e.target.value));
 }
 
 function renderCityListSuggestions(cities) {
@@ -513,7 +538,7 @@ function init() {
   });
   els.favBtn.addEventListener("click", toggleFavorite);
   els.geoBtn.addEventListener("click", useMyLocation);
-  els.version.textContent = `Version ${CONFIG.version}`;
+  els.version.textContent = `Version ${APP_VERSION}`;
   renderFavorites();
 
   const favs = loadFavorites();
