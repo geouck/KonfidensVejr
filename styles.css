@@ -1,0 +1,245 @@
+:root {
+  --bg: #0d1b2a;
+  --bg-soft: #16283c;
+  --card: #1d3350;
+  --card-border: #2a4a6e;
+  --text: #e8f1f8;
+  --text-dim: #9fb8cc;
+  --accent: #4cc9f0;
+  --accent-warm: #ffb703;
+  --danger: #ef476f;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: linear-gradient(180deg, var(--bg) 0%, #12233a 100%);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.app-header {
+  padding: 1.25rem 1rem 0.75rem;
+  text-align: center;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  letter-spacing: 0.03em;
+}
+
+.tagline {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 0.9rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+.controls { position: relative; }
+
+.search-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.search-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+#city-search {
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+#city-search:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: var(--bg-soft);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 20;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+.search-results li {
+  padding: 0.55rem 0.7rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.search-results li:hover,
+.search-results li.active { background: var(--card); }
+
+.search-results .meta {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.icon-btn {
+  flex: 0 0 auto;
+  width: 48px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--bg-soft);
+  color: var(--accent-warm);
+  font-size: 1.3rem;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.icon-btn:hover { background: var(--card); }
+.icon-btn:active { transform: scale(0.94); }
+
+.icon-btn.faved { color: var(--accent-warm); text-shadow: 0 0 8px rgba(255, 183, 3, 0.6); }
+
+.favorites {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+}
+
+.favorites:empty { display: none; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: var(--bg-soft);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip .remove {
+  border: none;
+  background: none;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0;
+  line-height: 1;
+}
+
+.status {
+  margin: 0.6rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  min-height: 1.2em;
+}
+
+.status.error { color: var(--danger); }
+
+.current h2 {
+  margin: 0 0 0.6rem;
+  font-size: 1.2rem;
+}
+
+.current-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+  text-align: center;
+}
+
+.current-item {
+  background: var(--bg-soft);
+  border-radius: 10px;
+  padding: 0.6rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.current-item .label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.current-item .value {
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.chart-card h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.chart-card .unit {
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.chart-card canvas {
+  width: 100% !important;
+  height: 240px !important;
+}
+
+.app-footer {
+  text-align: center;
+  padding: 1rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.app-footer a { color: var(--accent); }
+
+@media (min-width: 600px) {
+  .app-header h1 { font-size: 2rem; }
+  .chart-card canvas { height: 280px !important; }
+}
