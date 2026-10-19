@@ -243,3 +243,36 @@ body {
   .app-header h1 { font-size: 2rem; }
   .chart-card canvas { height: 280px !important; }
 }
+
+.geo-btn {
+  width: 100%;
+  margin-top: 0.6rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.geo-btn:hover { background: var(--card); }
+.geo-btn:active { transform: scale(0.98); }
+.geo-btn:disabled { opacity: 0.55; cursor: wait; }
+
+.frost-warning {
+  margin: 0 0 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 8px;
+  background: rgba(76, 201, 240, 0.12);
+  border: 1px solid rgba(76, 201, 240, 0.45);
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+#version {
+  margin: 0.3rem 0 0;
+  opacity: 0.7;
+}

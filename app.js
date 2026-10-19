@@ -40,12 +40,22 @@ const PARAMS = [
 const API_URL =
   "https://opendataapi.dmi.dk/v1/forecastedr/collections/harmonie_dini_eps_percentiles/position";
 
+const CONFIG = window.KONFIDENSVEJR_CONFIG || { version: "alfa.3", danadresseApiKey: "" };
+const DANADRESSE_URL = "https://api.danadresse.dk/steder/autocomplete";
+const DAWA_DEBOUNCE_MS = 300;
+const DAWA_KEY_STORAGE = "konfidensvejr.danadressekey";
+const CACHE_KEY_PREFIX = "konfidensvejr.cov.";
+const CACHE_TTL_MS = 15 * 60 * 1000;
+
 const FAV_KEY = "konfidensvejr.favorites";
 
 const els = {
   search: document.getElementById("city-search"),
   results: document.getElementById("search-results"),
   favBtn: document.getElementById("fav-toggle"),
+  geoBtn: document.getElementById("geo-btn"),
+  frostWarning: document.getElementById("frost-warning"),
+  version: document.getElementById("version"),
   favs: document.getElementById("favorites"),
   status: document.getElementById("status"),
   current: document.getElementById("current"),
@@ -128,18 +138,67 @@ function removeFavorite(city) {
   renderFavorites();
 }
 
-function renderSearchResults(query) {
-  const q = query.trim().toLowerCase();
-  const matches = q ? CITIES.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 12) : CITIES.slice(0, 12);
+function getDanadresseKey() {
+  if (CONFIG.danadresseApiKey) return CONFIG.danadresseApiKey;
+  try {
+    return localStorage.getItem(DAWA_KEY_STORAGE) || "";
+  } catch {
+    return "";
+  }
+}
+
+let searchToken = 0;
+let debounceTimer = null;
+
+function searchInputHandler(e) {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  const q = e.target.value.trim();
+  if (q.length < 2) {
+    renderCityListSuggestions(CITIES.slice(0, 12));
+    return;
+  }
+  debounceTimer = setTimeout(() => runSearch(q), DAWA_DEBOUNCE_MS);
+}
+
+async function runSearch(query) {
+  const token = ++searchToken;
+  const key = getDanadresseKey();
+  const fallback = () =>
+    CITIES.filter((c) => c.name.toLowerCase().includes(query.toLowerCase())).slice(0, 12);
+  if (!key) {
+    renderCityListSuggestions(fallback());
+    return;
+  }
+  try {
+    const url = `${DANADRESSE_URL}?q=${encodeURIComponent(query)}&type=bebyggelse,postnummer&per_side=12`;
+    const res = await fetch(url, { headers: { "X-Api-Key": key } });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const results = await res.json();
+    if (token !== searchToken) return;
+    const places = (Array.isArray(results) ? results : []).map(dawaResultToCity).filter(Boolean);
+    renderCityListSuggestions(places.length > 0 ? places : fallback());
+  } catch {
+    if (token === searchToken) renderCityListSuggestions(fallback());
+  }
+}
+
+function dawaResultToCity(r) {
+  const lat = r?.wgs84koordinat?.lat ?? r?.geometry?.coordinates?.[1] ?? r?.y;
+  const lon = r?.wgs84koordinat?.lon ?? r?.geometry?.coordinates?.[0] ?? r?.x;
+  if (!isFinite(lat) || !isFinite(lon)) return null;
+  return { name: r.tekst || r.navn || "Ukendt sted", lat, lon };
+}
+
+function renderCityListSuggestions(cities) {
   els.results.innerHTML = "";
-  if (matches.length === 0) {
+  if (cities.length === 0) {
     els.results.hidden = true;
     return;
   }
-  for (const city of matches) {
+  for (const city of cities) {
     const li = document.createElement("li");
     li.role = "option";
-    li.innerHTML = `<strong>${escapeHtml(city.name)}</strong><span class="meta">${city.lat.toFixed(3)}°N, ${city.lon.toFixed(3)}°E</span>`;
+    li.innerHTML = `<strong>${escapeHtml(city.name)}</strong><span class="meta">${Number(city.lat).toFixed(3)}°N, ${Number(city.lon).toFixed(3)}°E</span>`;
     li.addEventListener("click", () => {
       els.results.hidden = true;
       els.search.value = city.name;
@@ -150,12 +209,68 @@ function renderSearchResults(query) {
   els.results.hidden = false;
 }
 
+function useMyLocation() {
+  if (!navigator.geolocation) {
+    showStatus("Din browser understøtter ikke geolokation.", true);
+    return;
+  }
+  els.geoBtn.disabled = true;
+  showStatus("Finder din placering…");
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      els.geoBtn.disabled = false;
+      selectCity({ name: "Min placering", lat: pos.coords.latitude, lon: pos.coords.longitude });
+    },
+    (err) => {
+      els.geoBtn.disabled = false;
+      const msgs = {
+        1: "Adgang til placering blev nægtet. Tjek browserens indstillinger.",
+        2: "Din placering kunne ikke findes lige nu.",
+        3: "Timeout ved søgning efter din placering.",
+      };
+      showStatus(msgs[err.code] || "Din placering kunne ikke findes.", true);
+    },
+    { enableHighAccuracy: false, timeout: 10000, maximumAge: 5 * 60 * 1000 }
+  );
+}
+
+function cacheKey(city) {
+  return `${CACHE_KEY_PREFIX}${Number(city.lon).toFixed(4)},${Number(city.lat).toFixed(4)}`;
+}
+
+function readCache(city) {
+  try {
+    const raw = sessionStorage.getItem(cacheKey(city));
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (!entry || typeof entry.expires !== "number" || Date.now() > entry.expires) {
+      sessionStorage.removeItem(cacheKey(city));
+      return null;
+    }
+    return entry.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(city, data) {
+  try {
+    sessionStorage.setItem(cacheKey(city), JSON.stringify({ expires: Date.now() + CACHE_TTL_MS, data }));
+  } catch {
+  }
+}
+
 async function fetchForecast(city) {
+  const cached = readCache(city);
+  if (cached) return cached;
+
   const coords = `POINT(${city.lon} ${city.lat})`;
   const url = `${API_URL}?coords=${encodeURIComponent(coords)}&crs=crs84&parameter-name=${PARAMS.join(",")}`;
   const res = await fetchWithRetry(url, 2);
   if (!res.ok) throw new Error(`DMI API svarede ${res.status}`);
-  return res.json();
+  const data = await res.json();
+  writeCache(city, data);
+  return data;
 }
 
 async function fetchWithRetry(url, retries) {
@@ -203,7 +318,7 @@ async function loadForecast(city) {
       throw new Error("Ingen prognosedata returneret fra API'et.");
     }
 
-    renderCurrent(city, times, temp50, precip50, wind50);
+    renderCurrent(city, times, temp50, precip50, wind50, temp10);
     renderCharts(times, { temp10, temp50, temp90 }, { precip50, precip90 }, { wind50, wind90 });
     showStatus(`Prognose opdateret ${new Date().toLocaleTimeString("da-DK")}`);
   } catch (err) {
@@ -225,9 +340,11 @@ function fmt(v, unit) {
   return `${v.toFixed(1)} ${unit}`;
 }
 
-function renderCurrent(city, times, temps, precips, winds) {
+function renderCurrent(city, times, temps, precips, winds, temp10) {
   els.current.hidden = false;
   els.cityName.textContent = city.name;
+  const frostRisk = Array.isArray(temp10) && temp10.some((v) => v !== null && v !== undefined && v < 0);
+  els.frostWarning.hidden = !frostRisk;
   els.curTemp.textContent = fmt(temps[0], "°C");
   els.curPrecip.textContent = fmt(precips[0], "mm/t");
   els.curWind.textContent = fmt(winds[0], "m/s");
@@ -389,13 +506,14 @@ function renderCharts(times, temp, precip, wind) {
 }
 
 function init() {
-  els.search.addEventListener("input", (e) => renderSearchResults(e.target.value));
-  els.search.addEventListener("focus", (e) => renderSearchResults(e.target.value));
+  els.search.addEventListener("input", searchInputHandler);
+  els.search.addEventListener("focus", searchInputHandler);
   document.addEventListener("click", (e) => {
     if (!e.target.closest(".search-wrapper")) els.results.hidden = true;
   });
   els.favBtn.addEventListener("click", toggleFavorite);
-
+  els.geoBtn.addEventListener("click", useMyLocation);
+  els.version.textContent = `Version ${CONFIG.version}`;
   renderFavorites();
 
   const favs = loadFavorites();

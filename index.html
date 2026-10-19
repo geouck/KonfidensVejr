@@ -11,6 +11,7 @@
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="stylesheet" href="styles.css" />
   <script src="vendor/chart.umd.min.js"></script>
+  <script src="config.js"></script>
 </head>
 <body>
   <header class="app-header">
@@ -28,12 +29,14 @@
         </div>
         <button id="fav-toggle" class="icon-btn" title="Gem som favorit" aria-label="Gem som favorit">☆</button>
       </div>
+      <button id="geo-btn" class="geo-btn" type="button">📍 Brug min placering</button>
       <div id="favorites" class="favorites" aria-label="Favoritbyer"></div>
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </section>
 
     <section id="current" class="current card" hidden>
       <h2 id="city-name"></h2>
+      <p id="frost-warning" class="frost-warning" hidden>❄️ Risiko for frost i udsigten</p>
       <div class="current-grid">
         <div class="current-item"><span class="label">Temperatur</span><span id="cur-temp" class="value"></span></div>
         <div class="current-item"><span class="label">Nedbør</span><span id="cur-precip" class="value"></span></div>
@@ -59,6 +62,7 @@
 
   <footer class="app-footer">
     <p>Data: <a href="https://www.dmi.dk/" rel="noopener">DMI Open Data</a> · Harmonie DINI EPS percentiler</p>
+    <p id="version"></p>
   </footer>
 
   <script src="app.js"></script>
