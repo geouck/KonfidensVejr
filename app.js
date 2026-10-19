@@ -265,11 +265,11 @@ function cacheKey(city) {
 
 function readCache(city) {
   try {
-    const raw = sessionStorage.getItem(cacheKey(city));
+    const raw = localStorage.getItem(cacheKey(city));
     if (!raw) return null;
     const entry = JSON.parse(raw);
     if (!entry || typeof entry.expires !== "number" || Date.now() > entry.expires) {
-      sessionStorage.removeItem(cacheKey(city));
+      localStorage.removeItem(cacheKey(city));
       return null;
     }
     return entry.data;
@@ -280,7 +280,7 @@ function readCache(city) {
 
 function writeCache(city, data) {
   try {
-    sessionStorage.setItem(cacheKey(city), JSON.stringify({ expires: Date.now() + CACHE_TTL_MS, data }));
+    localStorage.setItem(cacheKey(city), JSON.stringify({ expires: Date.now() + CACHE_TTL_MS, data }));
   } catch {
   }
 }
@@ -395,13 +395,18 @@ function timeLabels(times) {
   });
 }
 
-function makeHourTickSkipper(times) {
-  const n = times.length;
-  const target = Math.max(6, Math.min(14, Math.floor(n / 4)));
+function makeTickSkipper(labels) {
+  const n = labels.length;
+  const target = Math.max(6, Math.min(14, Math.ceil(n / 5)));
+  if (n <= target) return (value, index) => labels[index];
+  const step = Math.ceil(n / target);
+  const dayChangeIdx = new Set();
+  labels.forEach((l, i) => {
+    if (l.length > 3) dayChangeIdx.add(i);
+  });
   return (value, index) => {
-    if (n <= target) return true;
-    const step = Math.ceil(n / target);
-    return index % step === 0;
+    if (index % step === 0 || dayChangeIdx.has(index)) return labels[index];
+    return null;
   };
 }
 
@@ -422,9 +427,9 @@ function gradientFill(context) {
 
 
 
-const baseScales = (times) => ({
+const baseScales = (labels) => ({
   x: {
-    ticks: { maxRotation: 0, autoSkip: false, callback: makeHourTickSkipper(times) },
+    ticks: { maxRotation: 0, autoSkip: false, callback: makeTickSkipper(labels) },
     grid: { display: true, color: (ctx) => (ctx.tick.label && String(ctx.tick.label).length > 3 ? "rgba(159,184,204,0.25)" : "transparent") },
   },
   y: { beginAtZero: true, grid: { color: "rgba(159,184,204,0.1)" } },
@@ -438,7 +443,7 @@ function renderCharts(times, temp, precip, wind) {
     interaction: { mode: "index", intersect: false },
     plugins: { legend: { display: false }, tooltip: { mode: "index", intersect: false } },
     scales: {
-      ...baseScales(times),
+      ...baseScales(labels),
       y: { beginAtZero: true, title: { display: true, text: yTitle }, grid: { color: "rgba(159,184,204,0.1)" } },
     },
   });
