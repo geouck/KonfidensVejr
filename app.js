@@ -405,7 +405,9 @@ function makeTickSkipper(labels) {
     if (l.length > 3) dayChangeIdx.add(i);
   });
   return (value, index) => {
-    if (index % step === 0 || dayChangeIdx.has(index)) return labels[index];
+    if (dayChangeIdx.has(index)) return labels[index];
+    if (dayChangeIdx.has(index - 1) || dayChangeIdx.has(index - 2)) return null;
+    if (index % step === 0) return labels[index];
     return null;
   };
 }
@@ -447,6 +449,11 @@ function renderCharts(times, temp, precip, wind) {
       y: { beginAtZero: true, title: { display: true, text: yTitle }, grid: { color: "rgba(159,184,204,0.1)" } },
     },
   });
+
+  const tempOpts = common("\u00b0C");
+  tempOpts.scales.y.beginAtZero = false;
+  const precipOpts = common("mm/t");
+  const windOpts = common("m/s");
 
   // Temperature fan chart
   const tempData = {
@@ -538,9 +545,6 @@ function renderCharts(times, temp, precip, wind) {
   if (charts.precip) charts.precip.destroy();
   if (charts.wind) charts.wind.destroy();
 
-  const tempOpts = common("°C");
-  tempOpts.scales.y.beginAtZero = false;
-
   charts.temp = new Chart(document.getElementById("temp-chart"), {
     type: "line",
     data: tempData,
@@ -550,13 +554,13 @@ function renderCharts(times, temp, precip, wind) {
   charts.precip = new Chart(document.getElementById("precip-chart"), {
     type: "bar",
     data: precipData,
-    options: common("mm/t"),
+    options: precipOpts,
   });
 
   charts.wind = new Chart(document.getElementById("wind-chart"), {
     type: "line",
     data: windData,
-    options: common("m/s"),
+    options: windOpts,
   });
 }
 
