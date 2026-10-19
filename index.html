@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0d1b2a" />
+  <meta name="description" content="Vejrudsigter med konfidensintervaller fra DMI's ensemble-modeller" />
+  <title>KonfidensVejr – Vejrudsigter med usikkerhed</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛅</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <h1>KonfidensVejr</h1>
+    <p class="tagline">Vejrudsigter med konfidensintervaller · DMI Ensemble</p>
+  </header>
+
+  <main class="container">
+    <section class="controls card">
+      <div class="search-row">
+        <div class="search-wrapper">
+          <input id="city-search" type="search" placeholder="Søg efter en by…" autocomplete="off"
+                 aria-label="Søg efter en by" />
+          <ul id="search-results" class="search-results" role="listbox" aria-label="Søgeresultater" hidden></ul>
+        </div>
+        <button id="fav-toggle" class="icon-btn" title="Gem som favorit" aria-label="Gem som favorit">☆</button>
+      </div>
+      <div id="favorites" class="favorites" aria-label="Favoritbyer"></div>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="current" class="current card" hidden>
+      <h2 id="city-name"></h2>
+      <div class="current-grid">
+        <div class="current-item"><span class="label">Temperatur</span><span id="cur-temp" class="value"></span></div>
+        <div class="current-item"><span class="label">Nedbør</span><span id="cur-precip" class="value"></span></div>
+        <div class="current-item"><span class="label">Vind</span><span id="cur-wind" class="value"></span></div>
+      </div>
+    </section>
+
+    <section class="card chart-card">
+      <h3>Temperatur <span class="unit">°C · median med 10–90 percentiler</span></h3>
+      <canvas id="temp-chart" aria-label="Temperaturprognose med konfidensinterval" role="img"></canvas>
+    </section>
+
+    <section class="card chart-card">
+      <h3>Nedbør <span class="unit">mm/t · median og 90. percentil</span></h3>
+      <canvas id="precip-chart" aria-label="Nedbørsprognose" role="img"></canvas>
+    </section>
+
+    <section class="card chart-card">
+      <h3>Vind <span class="unit">m/s · median med 90. percentil</span></h3>
+      <canvas id="wind-chart" aria-label="Vindprognose med konfidensinterval" role="img"></canvas>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>Data: <a href="https://www.dmi.dk/" rel="noopener">DMI Open Data</a> · Harmonie DINI EPS percentiler</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
