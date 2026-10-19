@@ -225,7 +225,29 @@ body {
   color: var(--text-dim);
 }
 
-.chart-card canvas {
+.chart-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--card-border) transparent;
+}
+
+.chart-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.chart-scroll::-webkit-scrollbar-thumb {
+  background: var(--card-border);
+  border-radius: 3px;
+}
+
+.chart-inner {
+  position: relative;
+  min-width: 900px;
+}
+
+.chart-inner canvas {
   width: 100% !important;
   height: 240px !important;
 }
@@ -241,7 +263,8 @@ body {
 
 @media (min-width: 600px) {
   .app-header h1 { font-size: 2rem; }
-  .chart-card canvas { height: 280px !important; }
+  .chart-inner canvas { height: 280px !important; }
+  .chart-inner { min-width: 900px; }
 }
 
 .geo-btn {

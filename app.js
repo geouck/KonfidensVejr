@@ -362,7 +362,7 @@ function selectCity(city) {
 
 function fmt(v, unit) {
   if (v === null || v === undefined) return `– ${unit}`;
-  return `${v.toFixed(1)} ${unit}`;
+  return `${Number(v).toFixed(1)} ${unit}`;
 }
 
 function renderCurrent(city, times, temps, precips, winds, temp10) {
@@ -381,7 +381,29 @@ function nextIndex(times) {
   return 0;
 }
 
-const timeLabels = (times) => times.map((t) => t.toLocaleString("da-DK", { weekday: "short", hour: "2-digit" }));
+function timeLabels(times) {
+  let lastDay = null;
+  return times.map((t) => {
+    const day = t.getDate();
+    const isDayChange = lastDay !== null && day !== lastDay;
+    lastDay = day;
+    const hour = t.toLocaleTimeString("da-DK", { hour: "2-digit" });
+    if (isDayChange) {
+      return `${t.toLocaleDateString("da-DK", { weekday: "short" })} ${hour}`;
+    }
+    return hour;
+  });
+}
+
+function makeHourTickSkipper(times) {
+  const n = times.length;
+  const target = Math.max(6, Math.min(14, Math.floor(n / 4)));
+  return (value, index) => {
+    if (n <= target) return true;
+    const step = Math.ceil(n / target);
+    return index % step === 0;
+  };
+}
 
 Chart.defaults.color = "#9fb8cc";
 Chart.defaults.font.family = "system-ui, sans-serif";
@@ -400,8 +422,11 @@ function gradientFill(context) {
 
 
 
-const baseScales = (labels) => ({
-  x: { ticks: { maxTicksLimit: 6, maxRotation: 0 }, grid: { display: false } },
+const baseScales = (times) => ({
+  x: {
+    ticks: { maxRotation: 0, autoSkip: false, callback: makeHourTickSkipper(times) },
+    grid: { display: true, color: (ctx) => (ctx.tick.label && String(ctx.tick.label).length > 3 ? "rgba(159,184,204,0.25)" : "transparent") },
+  },
   y: { beginAtZero: true, grid: { color: "rgba(159,184,204,0.1)" } },
 });
 
@@ -413,7 +438,7 @@ function renderCharts(times, temp, precip, wind) {
     interaction: { mode: "index", intersect: false },
     plugins: { legend: { display: false }, tooltip: { mode: "index", intersect: false } },
     scales: {
-      ...baseScales(labels),
+      ...baseScales(times),
       y: { beginAtZero: true, title: { display: true, text: yTitle }, grid: { color: "rgba(159,184,204,0.1)" } },
     },
   });
