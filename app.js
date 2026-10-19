@@ -177,11 +177,11 @@ function parseCoverage(cov) {
   return { times, get };
 }
 
-function sanitizeSeries(series, transform) {
+function sanitizeSeries(series, transform, keepGaps = false) {
   if (!Array.isArray(series)) return [];
   return series.map((v) => {
-    const n = v === null || v === undefined ? 0 : v;
-    return transform ? transform(n) : n;
+    if (v === null || v === undefined) return keepGaps ? null : 0;
+    return transform ? transform(v) : v;
   });
 }
 
@@ -191,9 +191,9 @@ async function loadForecast(city) {
     const cov = await fetchForecast(city);
     const { times, get } = parseCoverage(cov);
 
-    const temp50 = sanitizeSeries(get("temperature-2m", 50), (k) => k - 273.15);
-    const temp10 = sanitizeSeries(get("temperature-2m", 10), (k) => k - 273.15);
-    const temp90 = sanitizeSeries(get("temperature-2m", 90), (k) => k - 273.15);
+    const temp50 = sanitizeSeries(get("temperature-2m", 50), (k) => k - 273.15, true);
+    const temp10 = sanitizeSeries(get("temperature-2m", 10), (k) => k - 273.15, true);
+    const temp90 = sanitizeSeries(get("temperature-2m", 90), (k) => k - 273.15, true);
     const precip50 = sanitizeSeries(get("total-precipitation-1h", 50));
     const precip90 = sanitizeSeries(get("total-precipitation-1h", 90));
     const wind50 = sanitizeSeries(get("wind-speed-10m", 50));
@@ -221,8 +221,8 @@ function selectCity(city) {
 }
 
 function fmt(v, unit) {
-  const n = v === null || v === undefined ? 0 : v;
-  return `${n.toFixed(1)} ${unit}`;
+  if (v === null || v === undefined) return `– ${unit}`;
+  return `${v.toFixed(1)} ${unit}`;
 }
 
 function renderCurrent(city, times, temps, precips, winds) {
