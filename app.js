@@ -177,19 +177,27 @@ function parseCoverage(cov) {
   return { times, get };
 }
 
+function sanitizeSeries(series, transform) {
+  if (!Array.isArray(series)) return [];
+  return series.map((v) => {
+    const n = v === null || v === undefined ? 0 : v;
+    return transform ? transform(n) : n;
+  });
+}
+
 async function loadForecast(city) {
   showStatus(`Henter prognose for ${city.name}…`);
   try {
     const cov = await fetchForecast(city);
     const { times, get } = parseCoverage(cov);
 
-    const temp50 = get("temperature-2m", 50)?.map((k) => k - 273.15) || [];
-    const temp10 = get("temperature-2m", 10)?.map((k) => k - 273.15) || [];
-    const temp90 = get("temperature-2m", 90)?.map((k) => k - 273.15) || [];
-    const precip50 = get("total-precipitation-1h", 50) || [];
-    const precip90 = get("total-precipitation-1h", 90) || [];
-    const wind50 = get("wind-speed-10m", 50) || [];
-    const wind90 = get("wind-speed-10m", 90) || [];
+    const temp50 = sanitizeSeries(get("temperature-2m", 50), (k) => k - 273.15);
+    const temp10 = sanitizeSeries(get("temperature-2m", 10), (k) => k - 273.15);
+    const temp90 = sanitizeSeries(get("temperature-2m", 90), (k) => k - 273.15);
+    const precip50 = sanitizeSeries(get("total-precipitation-1h", 50));
+    const precip90 = sanitizeSeries(get("total-precipitation-1h", 90));
+    const wind50 = sanitizeSeries(get("wind-speed-10m", 50));
+    const wind90 = sanitizeSeries(get("wind-speed-10m", 90));
 
     if (times.length === 0 || temp50.length === 0) {
       throw new Error("Ingen prognosedata returneret fra API'et.");
@@ -212,12 +220,17 @@ function selectCity(city) {
   loadForecast(city);
 }
 
+function fmt(v, unit) {
+  const n = v === null || v === undefined ? 0 : v;
+  return `${n.toFixed(1)} ${unit}`;
+}
+
 function renderCurrent(city, times, temps, precips, winds) {
   els.current.hidden = false;
   els.cityName.textContent = city.name;
-  els.curTemp.textContent = `${temps[0].toFixed(1)} °C`;
-  els.curPrecip.textContent = `${precips[0].toFixed(1)} mm/t`;
-  els.curWind.textContent = `${winds[0].toFixed(1)} m/s`;
+  els.curTemp.textContent = fmt(temps[0], "°C");
+  els.curPrecip.textContent = fmt(precips[0], "mm/t");
+  els.curWind.textContent = fmt(winds[0], "m/s");
 }
 
 function nextIndex(times) {
