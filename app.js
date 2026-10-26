@@ -366,7 +366,6 @@ async function loadForecast(city) {
     const precip90 = sanitizeSeries(get("total-precipitation-1h", 90));
     const wind50 = sanitizeSeries(get("wind-speed-10m", 50));
     const wind90 = sanitizeSeries(get("wind-speed-10m", 90));
-    perf.mark(`data parsed (${times.length} timesteps x ${PARAMS.length} params)`);
 
     if (times.length === 0 || temp50.length === 0) {
       throw new Error("Ingen prognosedata returneret fra API'et.");
@@ -393,14 +392,12 @@ function selectCity(city) {
 
 function fmt(v, unit) {
   if (v === null || v === undefined) return `– ${unit}`;
-  return `${Number(v).toFixed(1)} ${unit}`;
+  return `${v.toFixed(1)} ${unit}`;
 }
 
-function renderCurrent(city, times, temps, precips, winds, temp10) {
+function renderCurrent(city, times, temps, precips, winds) {
   els.current.hidden = false;
   els.cityName.textContent = city.name;
-  const frostRisk = Array.isArray(temp10) && temp10.some((v) => v !== null && v !== undefined && v < 0);
-  els.frostWarning.hidden = !frostRisk;
   els.curTemp.textContent = fmt(temps[0], "°C");
   els.curPrecip.textContent = fmt(precips[0], "mm/t");
   els.curWind.textContent = fmt(winds[0], "m/s");
