@@ -97,6 +97,21 @@ const CACHE_TTL_MS = 15 * 60 * 1000;
 
 const FAV_KEY = "konfidensvejr.favorites";
 
+const perf = {
+  t0: 0,
+  start() {
+    this.t0 = performance.now();
+  },
+  mark(label) {
+    const dt = performance.now() - this.t0;
+    console.log(`[perf] ${label}: +${dt.toFixed(0)} ms`);
+    return dt;
+  },
+  total(label = "total") {
+    return this.mark(label);
+  },
+};
+
 const els = {
   search: document.getElementById("city-search"),
   results: document.getElementById("search-results"),
@@ -286,24 +301,37 @@ function writeCache(city, data) {
 }
 
 async function fetchForecast(city) {
+  perf.start();
   const cached = readCache(city);
-  if (cached) return cached;
+  if (cached) {
+    perf.mark("cache hit (localStorage)");
+    return cached;
+  }
+  perf.mark("cache miss");
 
   const coords = `POINT(${city.lon} ${city.lat})`;
   const url = `${API_URL}?coords=${encodeURIComponent(coords)}&crs=crs84&parameter-name=${PARAMS.join(",")}`;
   const res = await fetchWithRetry(url, 2);
+  perf.mark("API fetch (headers + download)");
   if (!res.ok) throw new Error(`DMI API svarede ${res.status}`);
-  const data = await res.json();
+  const blob = await res.blob();
+  perf.mark(`payload size ${(blob.size / 1024).toFixed(0)} KB`);
+  const data = await blob.json();
+  perf.mark("JSON parse");
   writeCache(city, data);
   return data;
 }
 
 async function fetchWithRetry(url, retries) {
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const t = performance.now();
     const res = await fetch(url, { headers: { Accept: "application/prs.coverage+json" } });
+    console.log(`[perf] fetch attempt ${attempt + 1}: status ${res.status} in ${(performance.now() - t).toFixed(0)} ms`);
     if (res.status !== 429) return res;
     if (attempt === retries) return res;
-    await new Promise((r) => setTimeout(r, 5000 * (attempt + 1)));
+    const wait = 5000 * (attempt + 1);
+    console.log(`[perf] 429 received, waiting ${wait} ms before retry`);
+    await new Promise((r) => setTimeout(r, wait));
   }
 }
 
@@ -338,6 +366,7 @@ async function loadForecast(city) {
     const precip90 = sanitizeSeries(get("total-precipitation-1h", 90));
     const wind50 = sanitizeSeries(get("wind-speed-10m", 50));
     const wind90 = sanitizeSeries(get("wind-speed-10m", 90));
+    perf.mark(`data parsed (${times.length} timesteps x ${PARAMS.length} params)`);
 
     if (times.length === 0 || temp50.length === 0) {
       throw new Error("Ingen prognosedata returneret fra API'et.");
@@ -345,9 +374,11 @@ async function loadForecast(city) {
 
     renderCurrent(city, times, temp50, precip50, wind50, temp10);
     renderCharts(times, { temp10, temp50, temp90 }, { precip50, precip90 }, { wind50, wind90 });
-    showStatus(`Prognose opdateret ${new Date().toLocaleTimeString("da-DK")}`);
+    const dt = perf.total("render done");
+    showStatus(`Prognose opdateret ${new Date().toLocaleTimeString("da-DK")} (${(dt / 1000).toFixed(1)} s)`);
   } catch (err) {
     console.error(err);
+    perf.total("failed after");
     showStatus(`Fejl: ${err.message}. Tjek din internetforbindelse og prøv igen.`, true);
   }
 }
