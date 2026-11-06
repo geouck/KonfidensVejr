@@ -1,4 +1,4 @@
-const CACHE = "konfidensvejr-alfa.4.2";
+const CACHE = "konfidensvejr-alfa.5";
 const ASSETS = [
   "./",
   "./index.html",
