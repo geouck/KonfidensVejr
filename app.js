@@ -91,11 +91,28 @@ const PARAMS = [
 const API_URL =
   "https://opendataapi.dmi.dk/v1/forecastedr/collections/harmonie_dini_eps_percentiles/position";
 
-const APP_VERSION = "alfa.4";
+const APP_VERSION = "alfa.5";
 const CACHE_KEY_PREFIX = "konfidensvejr.cov.";
-const CACHE_TTL_MS = 15 * 60 * 1000;
+const CACHE_TTL_MS = 15 * 60 * 1000; // cache anses for "frisk" i 15 min (så hentes der ikke ved hver indlæsning)
+const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000; // ældre cache beholdes som fallback ("sidst gode prognose") i op til 6 timer
+const FETCH_TIMEOUT_MS = 30 * 1000; // giv op på et API-kald hvis DMI ikke svarer inden for 30 sek
 
 const FAV_KEY = "konfidensvejr.favorites";
+
+const perf = {
+  t0: 0,
+  start() {
+    this.t0 = performance.now();
+  },
+  mark(label) {
+    const dt = performance.now() - this.t0;
+    console.log(`[perf] ${label}: +${dt.toFixed(0)} ms`);
+    return dt;
+  },
+  total(label = "total") {
+    return this.mark(label);
+  },
+};
 
 const els = {
   search: document.getElementById("city-search"),
@@ -268,11 +285,14 @@ function readCache(city) {
     const raw = localStorage.getItem(cacheKey(city));
     if (!raw) return null;
     const entry = JSON.parse(raw);
-    if (!entry || typeof entry.expires !== "number" || Date.now() > entry.expires) {
+    if (!entry || !entry.data || typeof entry.expires !== "number") return null;
+    // gamle cache-poster uden savedAt: udled det fra expires
+    const savedAt = typeof entry.savedAt === "number" ? entry.savedAt : entry.expires - CACHE_TTL_MS;
+    if (Date.now() - savedAt > CACHE_MAX_AGE_MS) {
       localStorage.removeItem(cacheKey(city));
       return null;
     }
-    return entry.data;
+    return { data: entry.data, savedAt, fresh: Date.now() <= entry.expires };
   } catch {
     return null;
   }
@@ -280,30 +300,56 @@ function readCache(city) {
 
 function writeCache(city, data) {
   try {
-    localStorage.setItem(cacheKey(city), JSON.stringify({ expires: Date.now() + CACHE_TTL_MS, data }));
+    const now = Date.now();
+    localStorage.setItem(cacheKey(city), JSON.stringify({ expires: now + CACHE_TTL_MS, savedAt: now, data }));
   } catch {
   }
 }
 
 async function fetchForecast(city) {
-  const cached = readCache(city);
-  if (cached) return cached;
+  perf.start();
+  perf.mark("cache miss — henter friskt fra DMI");
 
   const coords = `POINT(${city.lon} ${city.lat})`;
   const url = `${API_URL}?coords=${encodeURIComponent(coords)}&crs=crs84&parameter-name=${PARAMS.join(",")}`;
   const res = await fetchWithRetry(url, 2);
+  perf.mark("API fetch (headers + download)");
   if (!res.ok) throw new Error(`DMI API svarede ${res.status}`);
-  const data = await res.json();
+  const blob = await res.blob();
+  perf.mark(`payload size ${(blob.size / 1024).toFixed(0)} KB`);
+  const data = await blob.json();
+  perf.mark("JSON parse");
   writeCache(city, data);
   return data;
 }
 
+async function fetchWithTimeout(url, timeoutMs) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { headers: { Accept: "application/prs.coverage+json" }, signal: ctrl.signal });
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      throw new Error(`DMI API'et svarede ikke inden for ${timeoutMs / 1000} sekunder`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchWithRetry(url, retries) {
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const res = await fetch(url, { headers: { Accept: "application/prs.coverage+json" } });
+    const t = performance.now();
+    const res = await fetchWithTimeout(url, FETCH_TIMEOUT_MS);
+    console.log(`[perf] fetch attempt ${attempt + 1}: status ${res.status} in ${(performance.now() - t).toFixed(0)} ms`);
     if (res.status !== 429) return res;
     if (attempt === retries) return res;
-    await new Promise((r) => setTimeout(r, 5000 * (attempt + 1)));
+    // respekter Retry-After hvis DMI sender den, ellers kort backoff (max 15 s)
+    const retryAfterSec = Number(res.headers.get("Retry-After"));
+    const wait = Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? Math.min(retryAfterSec * 1000, 15000) : 2000 * (attempt + 1);
+    console.log(`[perf] 429 received, waiting ${wait} ms before retry`);
+    await new Promise((r) => setTimeout(r, wait));
   }
 }
 
@@ -325,31 +371,85 @@ function sanitizeSeries(series, transform, keepGaps = false) {
   });
 }
 
-async function loadForecast(city) {
-  showStatus(`Henter prognose for ${city.name}…`);
+let loadSeq = 0;
+
+function renderForecast(city, cov) {
+  const { times, get } = parseCoverage(cov);
+
+  const temp50 = sanitizeSeries(get("temperature-2m", 50), (k) => k - 273.15, true);
+  const temp10 = sanitizeSeries(get("temperature-2m", 10), (k) => k - 273.15, true);
+  const temp90 = sanitizeSeries(get("temperature-2m", 90), (k) => k - 273.15, true);
+  const precip50 = sanitizeSeries(get("total-precipitation-1h", 50));
+  const precip90 = sanitizeSeries(get("total-precipitation-1h", 90));
+  const wind50 = sanitizeSeries(get("wind-speed-10m", 50));
+  const wind90 = sanitizeSeries(get("wind-speed-10m", 90));
+  perf.mark(`data parsed (${times.length} timesteps x ${PARAMS.length} params)`);
+
+  if (times.length === 0 || temp50.length === 0) {
+    throw new Error("Ingen prognosedata returneret fra API'et.");
+  }
+
+  renderCurrent(city, times, temp50, precip50, wind50, temp10);
+  renderCharts(times, { temp10, temp50, temp90 }, { precip50, precip90 }, { wind50, wind90 });
+}
+
+async function refreshForecast(city, seq, staleSavedAt) {
   try {
     const cov = await fetchForecast(city);
-    const { times, get } = parseCoverage(cov);
-
-    const temp50 = sanitizeSeries(get("temperature-2m", 50), (k) => k - 273.15, true);
-    const temp10 = sanitizeSeries(get("temperature-2m", 10), (k) => k - 273.15, true);
-    const temp90 = sanitizeSeries(get("temperature-2m", 90), (k) => k - 273.15, true);
-    const precip50 = sanitizeSeries(get("total-precipitation-1h", 50));
-    const precip90 = sanitizeSeries(get("total-precipitation-1h", 90));
-    const wind50 = sanitizeSeries(get("wind-speed-10m", 50));
-    const wind90 = sanitizeSeries(get("wind-speed-10m", 90));
-
-    if (times.length === 0 || temp50.length === 0) {
-      throw new Error("Ingen prognosedata returneret fra API'et.");
-    }
-
-    renderCurrent(city, times, temp50, precip50, wind50, temp10);
-    renderCharts(times, { temp10, temp50, temp90 }, { precip50, precip90 }, { wind50, wind90 });
-    showStatus(`Prognose opdateret ${new Date().toLocaleTimeString("da-DK")}`);
+    if (seq !== loadSeq) return; // en anden by er valgt, mens vi hentede
+    renderForecast(city, cov);
+    const dt = perf.total("render done");
+    showStatus(`Prognose opdateret ${new Date().toLocaleTimeString("da-DK")} (${(dt / 1000).toFixed(1)} s)`);
   } catch (err) {
     console.error(err);
-    showStatus(`Fejl: ${err.message}. Tjek din internetforbindelse og prøv igen.`, true);
+    perf.total("failed after");
+    if (seq !== loadSeq) return;
+    if (staleSavedAt) {
+      showStatus(`Kunne ikke hente friske data (${err.message}) — viser cachet prognose fra ${new Date(staleSavedAt).toLocaleTimeString("da-DK")}.`, true);
+    } else {
+      showStatus(`Fejl: ${err.message}. Tjek din internetforbindelse og prøv igen.`, true);
+    }
   }
+}
+
+async function loadForecast(city) {
+  const seq = ++loadSeq;
+  const cached = readCache(city);
+
+  // Frisk cache: vis med det samme, uden netværkskald
+  if (cached && cached.fresh) {
+    perf.start();
+    perf.mark("cache hit (frisk, localStorage)");
+    try {
+      renderForecast(city, cached.data);
+      perf.total("render done (cache)");
+      showStatus(`Prognose fra cache, gemt ${new Date(cached.savedAt).toLocaleTimeString("da-DK")}`);
+      return;
+    } catch (err) {
+      console.error("Frisk cache kunne ikke vises, henter friskt:", err);
+    }
+  }
+
+  // Stale-while-revalidate: vis gammel cache med det samme, hent nyt i baggrunden
+  if (cached) {
+    let shown = false;
+    try {
+      perf.start();
+      renderForecast(city, cached.data);
+      perf.total("render done (stale cache)");
+      shown = true;
+      showStatus(`Viser cachet prognose fra ${new Date(cached.savedAt).toLocaleTimeString("da-DK")} — henter friske data…`);
+    } catch (err) {
+      console.error("Stale cache kunne ikke vises:", err);
+      showStatus(`Henter prognose for ${city.name}…`);
+    }
+    refreshForecast(city, seq, shown ? cached.savedAt : null);
+    return;
+  }
+
+  // Ingen cache: blokér på første hentning
+  showStatus(`Henter prognose for ${city.name}…`);
+  await refreshForecast(city, seq, null);
 }
 
 function selectCity(city) {
@@ -362,14 +462,12 @@ function selectCity(city) {
 
 function fmt(v, unit) {
   if (v === null || v === undefined) return `– ${unit}`;
-  return `${Number(v).toFixed(1)} ${unit}`;
+  return `${v.toFixed(1)} ${unit}`;
 }
 
-function renderCurrent(city, times, temps, precips, winds, temp10) {
+function renderCurrent(city, times, temps, precips, winds) {
   els.current.hidden = false;
   els.cityName.textContent = city.name;
-  const frostRisk = Array.isArray(temp10) && temp10.some((v) => v !== null && v !== undefined && v < 0);
-  els.frostWarning.hidden = !frostRisk;
   els.curTemp.textContent = fmt(temps[0], "°C");
   els.curPrecip.textContent = fmt(precips[0], "mm/t");
   els.curWind.textContent = fmt(winds[0], "m/s");
