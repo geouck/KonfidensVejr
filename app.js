@@ -91,13 +91,57 @@ const PARAMS = [
 const API_URL =
   "https://opendataapi.dmi.dk/v1/forecastedr/collections/harmonie_dini_eps_percentiles/position";
 
-const APP_VERSION = "alfa.5";
+const APP_VERSION = "alfa.6";
 const CACHE_KEY_PREFIX = "konfidensvejr.cov.";
 const CACHE_TTL_MS = 15 * 60 * 1000; // cache anses for "frisk" i 15 min (så hentes der ikke ved hver indlæsning)
 const CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000; // ældre cache beholdes som fallback ("sidst gode prognose") i op til 6 timer
-const FETCH_TIMEOUT_MS = 30 * 1000; // giv op på et API-kald hvis DMI ikke svarer inden for 30 sek
+const FETCH_TIMEOUT_MS = 30 * 1000; // giv op på et API-kald hvis API'et ikke svarer inden for 30 sek
 
 const FAV_KEY = "konfidensvejr.favorites";
+const MODEL_KEY = "konfidensvejr.model";
+
+// Tilgængelige prognosekilder. "auto" vælger bedste model for koordinaten.
+const OPEN_METEO_ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble";
+const MODELS = [
+  { id: "auto", label: "Auto (bedste for stedet)", type: "auto" },
+  { id: "dmi", label: "DMI HARMONIE DINI-EPS · 2 km · 60 t", type: "dmi", source: "DMI Open Data · HARMONIE DINI EPS percentiler", url: "https://www.dmi.dk/" },
+  { id: "icon_d2_eps", label: "DWD ICON-D2-EPS · 2 km · 48 t", type: "openmeteo", model: "icon_d2_eps", source: "Open-Meteo · DWD ICON-D2-EPS", url: "https://open-meteo.com/" },
+  { id: "icon_eu_eps", label: "DWD ICON-EU-EPS · ~6 km · 5 døgn", type: "openmeteo", model: "icon_eu_eps", source: "Open-Meteo · DWD ICON-EU-EPS", url: "https://open-meteo.com/" },
+  { id: "ecmwf_ifs025", label: "ECMWF IFS ENS · 25 km · 15 døgn", type: "openmeteo", model: "ecmwf_ifs025", source: "Open-Meteo · ECMWF IFS 0.25° ENS", url: "https://open-meteo.com/" },
+  { id: "gfs025", label: "NOAA GFS ENS · 25 km · 10 døgn", type: "openmeteo", model: "gfs025", source: "Open-Meteo · NOAA GFS Ensemble 0.25°", url: "https://open-meteo.com/" },
+];
+
+// Omtrentlige dækningsområder til auto-valg
+const DINI_BBOX = { lonMin: 7, lonMax: 16, latMin: 53, latMax: 60 }; // DMI HARMONIE DINI
+const EUROPE_BBOX = { lonMin: -11, lonMax: 45, latMin: 35, latMax: 71 }; // ICON-EU / Europa
+
+function inBBox(city, b) {
+  return city.lon >= b.lonMin && city.lon <= b.lonMax && city.lat >= b.latMin && city.lat <= b.latMax;
+}
+
+function resolveModel(city, selectedId) {
+  const byId = (id) => MODELS.find((m) => m.id === id);
+  if (selectedId && selectedId !== "auto" && byId(selectedId)) return byId(selectedId);
+  if (inBBox(city, DINI_BBOX)) return byId("dmi");
+  if (inBBox(city, EUROPE_BBOX)) return byId("icon_eu_eps");
+  return byId("gfs025");
+}
+
+function loadModelPref() {
+  try {
+    const v = localStorage.getItem(MODEL_KEY);
+    return v && MODELS.some((m) => m.id === v) ? v : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+function saveModelPref(id) {
+  try {
+    localStorage.setItem(MODEL_KEY, id);
+  } catch {
+  }
+}
 
 const perf = {
   t0: 0,
@@ -128,6 +172,8 @@ const els = {
   curTemp: document.getElementById("cur-temp"),
   curPrecip: document.getElementById("cur-precip"),
   curWind: document.getElementById("cur-wind"),
+  modelSelect: document.getElementById("model-select"),
+  dataSource: document.getElementById("data-source"),
 };
 
 let selectedCity = null;
@@ -276,20 +322,20 @@ function useMyLocation() {
   );
 }
 
-function cacheKey(city) {
-  return `${CACHE_KEY_PREFIX}${Number(city.lon).toFixed(4)},${Number(city.lat).toFixed(4)}`;
+function cacheKey(city, modelId) {
+  return `${CACHE_KEY_PREFIX}${modelId}:${Number(city.lon).toFixed(4)},${Number(city.lat).toFixed(4)}`;
 }
 
-function readCache(city) {
+function readCache(city, modelId) {
   try {
-    const raw = localStorage.getItem(cacheKey(city));
+    const raw = localStorage.getItem(cacheKey(city, modelId));
     if (!raw) return null;
     const entry = JSON.parse(raw);
     if (!entry || !entry.data || typeof entry.expires !== "number") return null;
     // gamle cache-poster uden savedAt: udled det fra expires
     const savedAt = typeof entry.savedAt === "number" ? entry.savedAt : entry.expires - CACHE_TTL_MS;
     if (Date.now() - savedAt > CACHE_MAX_AGE_MS) {
-      localStorage.removeItem(cacheKey(city));
+      localStorage.removeItem(cacheKey(city, modelId));
       return null;
     }
     return { data: entry.data, savedAt, fresh: Date.now() <= entry.expires };
@@ -298,39 +344,66 @@ function readCache(city) {
   }
 }
 
-function writeCache(city, data) {
+function writeCache(city, modelId, data) {
   try {
     const now = Date.now();
-    localStorage.setItem(cacheKey(city), JSON.stringify({ expires: now + CACHE_TTL_MS, savedAt: now, data }));
+    localStorage.setItem(cacheKey(city, modelId), JSON.stringify({ expires: now + CACHE_TTL_MS, savedAt: now, data }));
   } catch {
   }
 }
 
-async function fetchForecast(city) {
+async function fetchForecast(city, model) {
   perf.start();
-  perf.mark("cache miss — henter friskt fra DMI");
+  perf.mark(`cache miss — henter friskt (${model.id})`);
 
+  const data = model.type === "dmi" ? await fetchDMI(city) : await fetchOpenMeteo(city, model);
+  writeCache(city, model.id, data);
+  return data;
+}
+
+async function fetchDMI(city) {
   const coords = `POINT(${city.lon} ${city.lat})`;
   const url = `${API_URL}?coords=${encodeURIComponent(coords)}&crs=crs84&parameter-name=${PARAMS.join(",")}`;
-  const res = await fetchWithRetry(url, 2);
+  const res = await fetchWithRetry(url, 2, { Accept: "application/prs.coverage+json" });
   perf.mark("API fetch (headers + download)");
   if (!res.ok) throw new Error(`DMI API svarede ${res.status}`);
   const blob = await res.blob();
   perf.mark(`payload size ${(blob.size / 1024).toFixed(0)} KB`);
   const data = await blob.json();
   perf.mark("JSON parse");
-  writeCache(city, data);
   return data;
 }
 
-async function fetchWithTimeout(url, timeoutMs) {
+async function fetchOpenMeteo(city, model) {
+  const params = new URLSearchParams({
+    latitude: String(city.lat),
+    longitude: String(city.lon),
+    hourly: "temperature_2m,precipitation,wind_speed_10m",
+    models: model.model,
+    wind_speed_unit: "ms", // så vi får m/s ligesom DMI
+    timeformat: "unixtime",
+    timezone: "auto",
+    forecast_days: "7",
+  });
+  const url = `${OPEN_METEO_ENSEMBLE_URL}?${params.toString()}`;
+  const res = await fetchWithRetry(url, 2, { Accept: "application/json" });
+  perf.mark("API fetch (headers + download)");
+  if (!res.ok) throw new Error(`Open-Meteo svarede ${res.status}`);
+  const blob = await res.blob();
+  perf.mark(`payload size ${(blob.size / 1024).toFixed(0)} KB`);
+  const data = await blob.json();
+  perf.mark("JSON parse");
+  return data;
+}
+
+async function fetchWithTimeout(url, timeoutMs, headers) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    return await fetch(url, { headers: { Accept: "application/prs.coverage+json" }, signal: ctrl.signal });
+    return await fetch(url, { headers, signal: ctrl.signal });
   } catch (err) {
     if (err && err.name === "AbortError") {
-      throw new Error(`DMI API'et svarede ikke inden for ${timeoutMs / 1000} sekunder`);
+      throw new Error(`API'et svarede ikke inden for ${timeoutMs / 1000} sekunder`);
     }
     throw err;
   } finally {
@@ -338,14 +411,14 @@ async function fetchWithTimeout(url, timeoutMs) {
   }
 }
 
-async function fetchWithRetry(url, retries) {
+async function fetchWithRetry(url, retries, headers = { Accept: "application/json" }) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const t = performance.now();
-    const res = await fetchWithTimeout(url, FETCH_TIMEOUT_MS);
+    const res = await fetchWithTimeout(url, FETCH_TIMEOUT_MS, headers);
     console.log(`[perf] fetch attempt ${attempt + 1}: status ${res.status} in ${(performance.now() - t).toFixed(0)} ms`);
     if (res.status !== 429) return res;
     if (attempt === retries) return res;
-    // respekter Retry-After hvis DMI sender den, ellers kort backoff (max 15 s)
+    // respekter Retry-After hvis API'et sender den, ellers kort backoff (max 15 s)
     const retryAfterSec = Number(res.headers.get("Retry-After"));
     const wait = Number.isFinite(retryAfterSec) && retryAfterSec > 0 ? Math.min(retryAfterSec * 1000, 15000) : 2000 * (attempt + 1);
     console.log(`[perf] 429 received, waiting ${wait} ms before retry`);
@@ -373,33 +446,101 @@ function sanitizeSeries(series, transform, keepGaps = false) {
 
 let loadSeq = 0;
 
-function renderForecast(city, cov) {
+// DMI CoverageJSON -> færdige serier (°C, mm/t, m/s) med percentiler fra API'et
+function parseDMISeries(cov) {
   const { times, get } = parseCoverage(cov);
-
-  const temp50 = sanitizeSeries(get("temperature-2m", 50), (k) => k - 273.15, true);
-  const temp10 = sanitizeSeries(get("temperature-2m", 10), (k) => k - 273.15, true);
-  const temp90 = sanitizeSeries(get("temperature-2m", 90), (k) => k - 273.15, true);
-  const precip50 = sanitizeSeries(get("total-precipitation-1h", 50));
-  const precip90 = sanitizeSeries(get("total-precipitation-1h", 90));
-  const wind50 = sanitizeSeries(get("wind-speed-10m", 50));
-  const wind90 = sanitizeSeries(get("wind-speed-10m", 90));
-  perf.mark(`data parsed (${times.length} timesteps x ${PARAMS.length} params)`);
-
-  if (times.length === 0 || temp50.length === 0) {
-    throw new Error("Ingen prognosedata returneret fra API'et.");
-  }
-
-  renderCurrent(city, times, temp50, precip50, wind50, temp10);
-  renderCharts(times, { temp10, temp50, temp90 }, { precip50, precip90 }, { wind50, wind90 });
+  return {
+    times,
+    temp10: sanitizeSeries(get("temperature-2m", 10), (k) => k - 273.15, true),
+    temp50: sanitizeSeries(get("temperature-2m", 50), (k) => k - 273.15, true),
+    temp90: sanitizeSeries(get("temperature-2m", 90), (k) => k - 273.15, true),
+    precip50: sanitizeSeries(get("total-precipitation-1h", 50)),
+    precip90: sanitizeSeries(get("total-precipitation-1h", 90)),
+    wind50: sanitizeSeries(get("wind-speed-10m", 50)),
+    wind90: sanitizeSeries(get("wind-speed-10m", 90)),
+  };
 }
 
-async function refreshForecast(city, seq, staleSavedAt) {
+function percentile(sortedVals, p) {
+  const n = sortedVals.length;
+  if (n === 0) return null;
+  const idx = (p / 100) * (n - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sortedVals[lo];
+  return sortedVals[lo] + (sortedVals[hi] - sortedVals[lo]) * (idx - lo);
+}
+
+// Open-Meteo ensemble (ét array pr. medlem: "<var>_member00"...) -> percentiler pr. timestep.
+// Værdier er allerede i °C / mm / m/s (wind_speed_unit=ms).
+function parseOpenMeteoSeries(json) {
+  const hourly = json.hourly || {};
+  const times = (hourly.time || []).map((v) => new Date(v * 1000));
+
+  const memberArrays = (base) =>
+    Object.keys(hourly)
+      .filter((k) => k.startsWith(`${base}_member`))
+      .sort()
+      .map((k) => hourly[k]);
+
+  const pctSeries = (base, p) => {
+    const members = memberArrays(base);
+    const out = new Array(times.length).fill(null);
+    for (let i = 0; i < times.length; i++) {
+      const vals = [];
+      for (const arr of members) {
+        const v = arr && arr[i];
+        if (typeof v === "number" && isFinite(v)) vals.push(v);
+      }
+      if (vals.length > 0) {
+        vals.sort((a, b) => a - b);
+        out[i] = percentile(vals, p);
+      }
+    }
+    return out;
+  };
+
+  // beskær bort fortidige timer (Open-Meteo starter ved 00:00 i dag)
+  const nowIdx = times.findIndex((t) => t.getTime() >= Date.now() - 60 * 60 * 1000);
+  const start = nowIdx > 0 ? nowIdx : 0;
+  const slice = (arr) => (Array.isArray(arr) ? arr.slice(start) : arr);
+
+  return {
+    times: slice(times),
+    temp10: slice(pctSeries("temperature_2m", 10)),
+    temp50: slice(pctSeries("temperature_2m", 50)),
+    temp90: slice(pctSeries("temperature_2m", 90)),
+    precip50: slice(pctSeries("precipitation", 50)),
+    precip90: slice(pctSeries("precipitation", 90)),
+    wind50: slice(pctSeries("wind_speed_10m", 50)),
+    wind90: slice(pctSeries("wind_speed_10m", 90)),
+  };
+}
+
+function parseSeries(model, raw) {
+  return model.type === "dmi" ? parseDMISeries(raw) : parseOpenMeteoSeries(raw);
+}
+
+function renderForecast(city, model, series) {
+  perf.mark(`data parsed (${series.times.length} timesteps, model ${model.id})`);
+  if (series.times.length === 0 || series.temp50.length === 0) {
+    throw new Error("Ingen prognosedata returneret fra API'et.");
+  }
+  if (els.dataSource) {
+    els.dataSource.textContent = model.source || model.label;
+    if (model.url) els.dataSource.href = model.url;
+  }
+  renderCurrent(city, series.times, series.temp50, series.precip50, series.wind50, series.temp10);
+  renderCharts(series.times, { temp10: series.temp10, temp50: series.temp50, temp90: series.temp90 }, { precip50: series.precip50, precip90: series.precip90 }, { wind50: series.wind50, wind90: series.wind90 });
+}
+
+async function refreshForecast(city, model, seq, staleSavedAt) {
   try {
-    const cov = await fetchForecast(city);
-    if (seq !== loadSeq) return; // en anden by er valgt, mens vi hentede
-    renderForecast(city, cov);
+    const raw = await fetchForecast(city, model);
+    if (seq !== loadSeq) return; // en anden by/model er valgt, mens vi hentede
+    renderForecast(city, model, parseSeries(model, raw));
     const dt = perf.total("render done");
-    showStatus(`Prognose opdateret ${new Date().toLocaleTimeString("da-DK")} (${(dt / 1000).toFixed(1)} s)`);
+    showStatus(`Prognose opdateret ${new Date().toLocaleTimeString("da-DK")} (${(dt / 1000).toFixed(1)} s) · ${model.label}`);
   } catch (err) {
     console.error(err);
     perf.total("failed after");
@@ -414,16 +555,17 @@ async function refreshForecast(city, seq, staleSavedAt) {
 
 async function loadForecast(city) {
   const seq = ++loadSeq;
-  const cached = readCache(city);
+  const model = resolveModel(city, loadModelPref());
+  const cached = readCache(city, model.id);
 
   // Frisk cache: vis med det samme, uden netværkskald
   if (cached && cached.fresh) {
     perf.start();
     perf.mark("cache hit (frisk, localStorage)");
     try {
-      renderForecast(city, cached.data);
+      renderForecast(city, model, parseSeries(model, cached.data));
       perf.total("render done (cache)");
-      showStatus(`Prognose fra cache, gemt ${new Date(cached.savedAt).toLocaleTimeString("da-DK")}`);
+      showStatus(`Prognose fra cache, gemt ${new Date(cached.savedAt).toLocaleTimeString("da-DK")} · ${model.label}`);
       return;
     } catch (err) {
       console.error("Frisk cache kunne ikke vises, henter friskt:", err);
@@ -435,7 +577,7 @@ async function loadForecast(city) {
     let shown = false;
     try {
       perf.start();
-      renderForecast(city, cached.data);
+      renderForecast(city, model, parseSeries(model, cached.data));
       perf.total("render done (stale cache)");
       shown = true;
       showStatus(`Viser cachet prognose fra ${new Date(cached.savedAt).toLocaleTimeString("da-DK")} — henter friske data…`);
@@ -443,13 +585,13 @@ async function loadForecast(city) {
       console.error("Stale cache kunne ikke vises:", err);
       showStatus(`Henter prognose for ${city.name}…`);
     }
-    refreshForecast(city, seq, shown ? cached.savedAt : null);
+    refreshForecast(city, model, seq, shown ? cached.savedAt : null);
     return;
   }
 
   // Ingen cache: blokér på første hentning
   showStatus(`Henter prognose for ${city.name}…`);
-  await refreshForecast(city, seq, null);
+  await refreshForecast(city, model, seq, null);
 }
 
 function selectCity(city) {
@@ -662,6 +804,20 @@ function renderCharts(times, temp, precip, wind) {
   });
 }
 
+function initModelSelect() {
+  for (const m of MODELS) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.label;
+    els.modelSelect.appendChild(opt);
+  }
+  els.modelSelect.value = loadModelPref();
+  els.modelSelect.addEventListener("change", () => {
+    saveModelPref(els.modelSelect.value);
+    if (selectedCity) loadForecast(selectedCity);
+  });
+}
+
 function init() {
   els.search.addEventListener("input", searchInputHandler);
   els.search.addEventListener("focus", searchInputHandler);
@@ -671,6 +827,7 @@ function init() {
   els.favBtn.addEventListener("click", toggleFavorite);
   els.geoBtn.addEventListener("click", useMyLocation);
   els.version.textContent = `Version ${APP_VERSION}`;
+  initModelSelect();
   renderFavorites();
 
   const favs = loadFavorites();
