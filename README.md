@@ -20,6 +20,7 @@ python3 -m http.server 8080
 - **Vind**: median (`wind-speed-10m-50percentile`) med skygget område op til 90. percentil.
 - **PWA**: manifest + service worker med offline-caching af statiske filer.
 - **Hurtig indlæsning**: stale-while-revalidate — frisk cache (15 min) vises uden netværkskald; ældre cache (op til 6 t) vises øjeblikkeligt mens friskt data hentes i baggrunden. Fetch har 30 s timeout og respekterer `Retry-After` ved 429.
+- **Modelvalg**: vælg mellem DMI HARMONIE DINI-EPS (2 km) og ensemble-modeller via [Open-Meteo](https://open-meteo.com/) (ICON-D2-EPS 2 km, ICON-EU-EPS, ECMWF IFS ENS, GFS ENS), eller "Auto" som vælger bedste model for stedet. Percentiler beregnes client-side fra de enkelte ensemble-medlemmer hos Open-Meteo. Valget gemmes i `localStorage`.
 
 ## Teknik
 

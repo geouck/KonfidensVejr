@@ -63,6 +63,35 @@ body {
   gap: 0.5rem;
 }
 
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.model-row label {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+#model-select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+#model-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .search-wrapper {
   position: relative;
   flex: 1;
